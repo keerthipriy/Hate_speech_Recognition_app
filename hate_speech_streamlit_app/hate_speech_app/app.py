@@ -1,3 +1,4 @@
+import os
 import re
 import json
 import streamlit as st
@@ -6,30 +7,21 @@ import joblib
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
+# -------------------------------------------------
 # Page config
+# -------------------------------------------------
 st.set_page_config(
-    page_title="Hate Speech Classifier | Simple RNN",
+    page_title="Hate Speech Classifier",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for a polished look
+# -------------------------------------------------
+# Simple styling
+# -------------------------------------------------
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #1E3A5F;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
-    .sub-header {
-        font-size: 1.1rem;
-        color: #5A6A7A;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
     .result-box {
         padding: 1.5rem;
         border-radius: 12px;
@@ -48,13 +40,6 @@ st.markdown("""
         color: #1E8449;
         border: 2px solid #27AE60;
     }
-    .metric-card {
-        background-color: #F8F9FA;
-        padding: 1rem;
-        border-radius: 10px;
-        border-left: 4px solid #3498DB;
-        margin-bottom: 0.8rem;
-    }
     .stButton>button {
         width: 100%;
         background-color: #1E3A5F;
@@ -66,18 +51,39 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
+# -------------------------------------------------
+# Load model, tokenizer and config (relative paths)
+# -------------------------------------------------
 @st.cache_resource
 def load_artifacts():
-    # Use relative paths so it works on any computer
-    model = load_model("hate_speech_rnn_model.keras")
-    tokenizer = joblib.load("tokenizer.joblib")
-    with open("config.json") as f:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    model_path     = os.path.join(base_dir, "hate_speech_rnn_model.keras")
+    tokenizer_path = os.path.join(base_dir, "tokenizer.joblib")
+    config_path    = os.path.join(base_dir, "config.json")
+
+    for path, name in [
+        (model_path, "hate_speech_rnn_model.keras"),
+        (tokenizer_path, "tokenizer.joblib"),
+        (config_path, "config.json"),
+    ]:
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Could not find '{name}'.\n"
+                f"Expected at: {path}\n"
+                f"Make sure this file is in the same folder as app.py"
+            )
+
+    model = load_model(model_path)
+    tokenizer = joblib.load(tokenizer_path)
+    with open(config_path) as f:
         config = json.load(f)
-    return model, tokenizer, config
-    config = json.load(f)
+
     return model, tokenizer, config
 
+# -------------------------------------------------
+# Text cleaning (must match training)
+# -------------------------------------------------
 def clean_text(text):
     text = str(text).lower()
     text = re.sub(r'@\w+', '', text)
@@ -86,142 +92,112 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-def predict(text, model, tokenizer, max_len):
+# -------------------------------------------------
+# Prediction function
+# -------------------------------------------------
+def predict(text, model, tokenizer, max_len, threshold=0.40):
     cleaned = clean_text(text)
     seq = tokenizer.texts_to_sequences([cleaned])
     padded = pad_sequences(seq, maxlen=max_len, padding='post', truncating='post')
     prob = float(model.predict(padded, verbose=0)[0][0])
-    label = 1 if prob >= 0.5 else 0
+    label = 1 if prob >= threshold else 0
     return label, prob, cleaned
 
-# Load model
+# -------------------------------------------------
+# Load everything once
+# -------------------------------------------------
 model, tokenizer, config = load_artifacts()
-MAX_LEN = config["MAX_LEN"]
+MAX_LEN   = config.get("MAX_LEN", 40)
+THRESHOLD = config.get("THRESHOLD", 0.40)
 
+# -------------------------------------------------
 # Sidebar
+# -------------------------------------------------
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/shield.png", width=80)
     st.title("About the Model")
     st.markdown("""
-    **Architecture:**  
-    `Embedding → SimpleRNN → Dense(sigmoid)`
+    **Architecture**  
+    `Embedding → Bidirectional LSTM → Dense → Sigmoid`
 
-    | Layer | Details |
-    |-------|---------|
-    | Embedding | vocab=5000, dim=64 |
-    | SimpleRNN | 64 units |
-    | Output | 1 unit (sigmoid) |
-
-    **Training Settings:**
-    - Loss: Binary Crossentropy
-    - Optimizer: Adam
-    - Epochs: 10
-    - Batch Size: 32
-    - Max sequence length: 25
-    - Vocabulary: Top 5000 words
-
-    **Dataset:**  
-    31,962 tweets (imbalanced ~93:7)
-    """)
-    st.divider()
-    st.markdown("**Preprocessing steps:**")
-    st.markdown("""
-    1. Lowercase conversion  
-    2. Remove @mentions  
-    3. Remove URLs  
-    4. Keep only letters & spaces  
-    5. Collapse extra whitespace
+    **Improvements**
+    - Bidirectional LSTM (instead of SimpleRNN)
+    - Class weights for imbalance
+    - Tunable decision threshold
     """)
     st.divider()
     st.caption("Built with TensorFlow + Streamlit")
 
-# Main content
-st.markdown('<p class="main-header">🛡️ Hate Speech Classification</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Binary classifier using a Simple Recurrent Neural Network (RNN)</p>', unsafe_allow_html=True)
+# -------------------------------------------------
+# Main UI
+# -------------------------------------------------
+st.markdown("## 🛡️ Hate Speech Classification")
+st.markdown("Binary classifier (Hate Speech vs Non-Hate)")
 
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("Enter a Tweet")
     user_input = st.text_area(
-        "Type or paste a tweet here:",
+        "Enter a tweet / text:",
         height=150,
-        placeholder="e.g. I love this beautiful day! or any text you want to check...",
-        label_visibility="collapsed"
+        placeholder="Paste any text here..."
     )
 
-    analyze_btn = st.button("🔍 Analyze Tweet", type="primary")
-
-    if analyze_btn:
+    if st.button("🔍 Analyze", type="primary"):
         if not user_input.strip():
-            st.warning("Please enter some text to analyze.")
+            st.warning("Please enter some text.")
         else:
-            with st.spinner("Running Simple RNN inference..."):
-                label, prob, cleaned = predict(user_input, model, tokenizer, MAX_LEN)
+            with st.spinner("Running inference..."):
+                label, prob, cleaned = predict(
+                    user_input, model, tokenizer, MAX_LEN, THRESHOLD
+                )
 
             st.markdown("#### Result")
             if label == 1:
                 st.markdown(
-                    f'<div class="result-box hate">⚠️ HATE SPEECH DETECTED<br><small>Confidence: {prob*100:.1f}%</small></div>',
+                    f'<div class="result-box hate">⚠️ HATE SPEECH DETECTED<br>'
+                    f'<small>Probability: {prob*100:.1f}% (threshold = {THRESHOLD})</small></div>',
                     unsafe_allow_html=True
                 )
             else:
                 st.markdown(
-                    f'<div class="result-box non-hate">✅ NON-HATE (Safe)<br><small>Confidence: {(1-prob)*100:.1f}%</small></div>',
+                    f'<div class="result-box non-hate">✅ NON-HATE (Safe)<br>'
+                    f'<small>Probability of hate: {prob*100:.1f}% (threshold = {THRESHOLD})</small></div>',
                     unsafe_allow_html=True
                 )
 
-            # Probability bar
             st.markdown("#### Probability of Hate Speech")
-            st.progress(prob)
-            st.caption(f"Model output (sigmoid): **{prob:.4f}**  |  Threshold = 0.5")
+            st.progress(min(prob, 1.0))
+            st.caption(f"Raw sigmoid output: **{prob:.4f}** | Decision threshold: **{THRESHOLD}**")
 
-            with st.expander("View preprocessing details"):
-                st.write("**Original text:**")
+            with st.expander("Preprocessing details"):
+                st.write("**Original:**")
                 st.code(user_input)
-                st.write("**Cleaned text (fed to model):**")
+                st.write("**Cleaned (fed to model):**")
                 st.code(cleaned if cleaned else "(empty after cleaning)")
 
 with col2:
     st.subheader("Quick Examples")
     examples = [
-        ("I love spending time with my family on weekends!", 0),
-        ("Happy birthday to the best friend ever!", 0),
-        ("This is such a beautiful sunny day outside.", 0),
-        ("You people are disgusting and should leave.", 1),
-        ("I hate all of them, they don't belong here.", 1),
+        "I love spending time with my family!",
+        "You people are disgusting and should leave this country.",
+        "Happy birthday to the best friend ever!",
+        "I hate all of them, they don't belong here.",
+        "This is such a beautiful sunny day outside.",
     ]
-
-    for i, (ex, expected) in enumerate(examples):
+    for i, ex in enumerate(examples):
         if st.button(f"Example {i+1}", key=f"ex_{i}"):
-            st.session_state["example_text"] = ex
+            st.session_state["example"] = ex
 
-    if "example_text" in st.session_state:
-        st.info(f"**Selected:** {st.session_state['example_text']}")
-        if st.button("Run selected example"):
-            user_input = st.session_state["example_text"]
-            label, prob, cleaned = predict(user_input, model, tokenizer, MAX_LEN)
+    if "example" in st.session_state:
+        st.info(st.session_state["example"])
+        if st.button("Run this example"):
+            label, prob, _ = predict(
+                st.session_state["example"], model, tokenizer, MAX_LEN, THRESHOLD
+            )
             if label == 1:
                 st.error(f"⚠️ Hate Speech ({prob*100:.1f}%)")
             else:
                 st.success(f"✅ Non-Hate ({(1-prob)*100:.1f}%)")
 
 st.divider()
-
-# Model performance section
-st.subheader("📊 Model Performance (from original training)")
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Test Accuracy", "94.93%")
-m2.metric("Hate F1-Score", "0.61")
-m3.metric("Non-Hate F1", "0.97")
-m4.metric("Macro F1", "0.79")
-
-st.markdown("""
-**Confusion Matrix (original run):**
-|  | Predicted Non-Hate | Predicted Hate |
-|--|--------------------|----------------|
-| **Actual Non-Hate** | 5814 | 131 |
-| **Actual Hate** | 193 | 255 |
-""")
-
-st.caption("Note: The dataset is heavily imbalanced (≈93% Non-Hate). Overall accuracy is high, but Hate-class recall is more important for real-world use.")
+st.caption("Note: The original dataset is heavily imbalanced. Class weights + a lower threshold significantly improve hate-speech recall.")
