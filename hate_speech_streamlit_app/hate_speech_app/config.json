@@ -1,0 +1,7 @@
+{
+  "VOCAB_SIZE": 12000,
+  "MAX_LEN": 50,
+  "EMBED_DIM": 128,
+  "LSTM_UNITS": 64,
+  "THRESHOLD": 0.45
+}
